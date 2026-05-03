@@ -1,0 +1,20 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
+.venv/
+venv/
+
+# Environment & secrets
+.env
+
+# Runtime storage & logs
+pawpal.json
+pawpal.db
+*.log
+
+# IDE
+.idea/
+.vscode/

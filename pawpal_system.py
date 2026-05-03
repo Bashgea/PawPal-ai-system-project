@@ -3,10 +3,10 @@
 import logging
 import uuid
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Any
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ class Pet:
     notes:   str = ""
     id:      str = field(default_factory=lambda: str(uuid.uuid4()))
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "id":      self.id,
             "name":    self.name,
@@ -50,7 +50,7 @@ class Pet:
         }
 
     @staticmethod
-    def from_dict(data: dict) -> "Pet":
+    def from_dict(data: dict[str, Any]) -> "Pet":
         return Pet(
             name    = data["name"],
             species = data["species"],
@@ -82,7 +82,7 @@ class Task(ABC):
     def validate(self) -> list[str]:
         """Return a list of problems. Empty list means the task is valid."""
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         task_type = self.__class__.__name__.lower().replace("task", "")
         return {
             "type":     task_type,
@@ -95,7 +95,7 @@ class Task(ABC):
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "Task":
+    def from_dict(cls, data: dict[str, Any]) -> "Task":
         """Build the right Task subclass from a saved dict."""
         type_map = {
             "feeding":     FeedingTask,
@@ -219,7 +219,7 @@ class Schedule:
     window_start: datetime
     window_end:   datetime
 
-    def filter(self, fn) -> "Schedule":
+    def filter(self, fn: Callable[[Task], bool]) -> "Schedule":
         """Return a new Schedule with only the tasks where fn(task) is True."""
         return Schedule(
             tasks        = [t for t in self.tasks if fn(t)],
@@ -234,8 +234,8 @@ class Schedule:
 
     def detect_conflicts(self) -> list[str]:
         """Return a list of conflict descriptions (same pet, same time)."""
-        seen = {}
-        conflicts = []
+        seen: dict[tuple[str, datetime], str] = {}
+        conflicts: list[str] = []
         for task in self.tasks:
             key = (task.pet_id, task.due_at)
             if key in seen:
@@ -246,6 +246,88 @@ class Schedule:
             else:
                 seen[key] = task.id
         return conflicts
+
+
+# ── Scheduling rules ─────────────────────────────────────────────────────────
+
+MIN_MEDICATION_SPACING = timedelta(hours=8)
+WALK_FEEDING_COOLDOWN  = timedelta(minutes=30)
+
+
+def _shift(task: Task, new_time: datetime) -> Task:
+    """Return a copy of task with due_at changed. Never mutates the original."""
+    return replace(task, due_at=new_time)
+
+
+def _rule_medication_spacing(tasks: list[Task], window_end: datetime, now: datetime) -> list[Task]:
+    """Enforce MIN_MEDICATION_SPACING between doses of the same medication per pet."""
+    groups: dict[tuple[str, str], list[MedicationTask]] = {}
+    for t in tasks:
+        if isinstance(t, MedicationTask):
+            key = (t.pet_id, t.metadata.get("medication_name", ""))
+            groups.setdefault(key, []).append(t)
+
+    replacements: dict[str, Task] = {}
+    for group in groups.values():
+        sorted_group = sorted(group, key=lambda t: t.due_at)
+        for i in range(1, len(sorted_group)):
+            prev = replacements.get(sorted_group[i - 1].id, sorted_group[i - 1])
+            curr = replacements.get(sorted_group[i].id, sorted_group[i])
+            if curr.due_at - prev.due_at < MIN_MEDICATION_SPACING:
+                new_time = prev.due_at + MIN_MEDICATION_SPACING
+                if new_time >= window_end:
+                    raise SchedulingConflict(
+                        f"Cannot space {curr.metadata.get('medication_name')!r} doses "
+                        f"for pet {curr.pet_id!r}: next valid slot {new_time.isoformat()} "
+                        f"is outside today's window."
+                    )
+                replacements[curr.id] = _shift(curr, new_time)
+
+    return [replacements.get(t.id, t) for t in tasks]
+
+
+def _rule_walk_cooldown(tasks: list[Task], window_end: datetime, now: datetime) -> list[Task]:
+    """No walk within WALK_FEEDING_COOLDOWN minutes after a feeding, per pet."""
+    feedings_by_pet: dict[str, list[FeedingTask]] = {}
+    for t in tasks:
+        if isinstance(t, FeedingTask):
+            feedings_by_pet.setdefault(t.pet_id, []).append(t)
+
+    replacements: dict[str, Task] = {}
+    for t in tasks:
+        if not isinstance(t, WalkTask):
+            continue
+        current      = replacements.get(t.id, t)
+        walk_time    = current.due_at
+        pet_feedings = sorted(feedings_by_pet.get(t.pet_id, []), key=lambda f: f.due_at)
+        for feeding in pet_feedings:
+            cooldown_end = feeding.due_at + WALK_FEEDING_COOLDOWN
+            if feeding.due_at <= walk_time < cooldown_end:
+                walk_time = cooldown_end
+                if walk_time >= window_end:
+                    raise SchedulingConflict(
+                        f"Walk for pet {t.pet_id!r} cannot be rescheduled outside "
+                        f"feeding cooldown: next valid slot {walk_time.isoformat()} "
+                        f"is outside today's window."
+                    )
+        if walk_time != current.due_at:
+            replacements[t.id] = _shift(current, walk_time)
+
+    return [replacements.get(t.id, t) for t in tasks]
+
+
+def _rule_appointment_immovable(tasks: list[Task], now: datetime) -> list[Task]:
+    """Raise SchedulingConflict if any non-appointment task occupies an appointment slot."""
+    appt_slots = {
+        (t.pet_id, t.due_at) for t in tasks if isinstance(t, AppointmentTask)
+    }
+    for t in tasks:
+        if not isinstance(t, AppointmentTask) and (t.pet_id, t.due_at) in appt_slots:
+            raise SchedulingConflict(
+                f"{t.__class__.__name__} {t.id!r} for pet {t.pet_id!r} conflicts with "
+                f"an appointment at {t.due_at.isoformat()}. Appointments cannot be moved."
+            )
+    return tasks
 
 
 # ── Scheduler ─────────────────────────────────────────────────────────────────
@@ -269,10 +351,11 @@ class Scheduler:
         return schedule.sort_by_urgency(now)
 
     def apply_rules(self, schedule: Schedule, now: datetime) -> Schedule:
-        """Apply scheduling rules (walk cooldowns, medication spacing, etc.).
-        Add new rules here as pure functions — each takes a Schedule and returns one.
-        """
-        return schedule
+        """Run all scheduling rules and return a corrected Schedule."""
+        tasks = _rule_medication_spacing(schedule.tasks, schedule.window_end, now)
+        tasks = _rule_walk_cooldown(tasks, schedule.window_end, now)
+        tasks = _rule_appointment_immovable(tasks, now)
+        return Schedule(tasks, schedule.window_start, schedule.window_end)
 
 
 # ── PlanResult ────────────────────────────────────────────────────────────────
@@ -329,7 +412,7 @@ class PawPalSystem:
         logger.info("Task added: %s for pet %s", task.__class__.__name__, task.pet_id)
         return task
 
-    def get_tasks(self, pet_id: str = None) -> list[Task]:
+    def get_tasks(self, pet_id: str | None = None) -> list[Task]:
         """Return all tasks, or only tasks for a specific pet."""
         tasks = list(self._tasks.values())
         if pet_id:

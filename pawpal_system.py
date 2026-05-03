@@ -8,6 +8,9 @@ from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any, Callable
 
+import config
+import storage
+
 logger = logging.getLogger(__name__)
 
 
@@ -376,10 +379,34 @@ class PlanResult:
 class PawPalSystem:
     """The main entry point. UI, demo, and agent all talk only to this class."""
 
-    def __init__(self):
+    def __init__(self, db_path: str | None = None):
         self._pets: dict[str, Pet]   = {}
         self._tasks: dict[str, Task] = {}
         self._scheduler = Scheduler()
+        self._db_path = db_path or config.PAWPAL_DB
+        self._load()
+
+    # -- Persistence --
+
+    def _load(self) -> None:
+        state = storage.load_state(self._db_path)
+        for d in state.get("pets", []):
+            try:
+                pet = Pet.from_dict(d)
+                self._pets[pet.id] = pet
+            except (KeyError, ValueError) as exc:
+                logger.warning("Skipping corrupt pet record: %s", exc)
+        for d in state.get("tasks", []):
+            try:
+                task = Task.from_dict(d)
+                self._tasks[task.id] = task
+            except (KeyError, ValueError, TaskValidationError) as exc:
+                logger.warning("Skipping corrupt task record: %s", exc)
+
+    def _save(self) -> None:
+        pets  = [p.to_dict() for p in self._pets.values()]
+        tasks = [t.to_dict() for t in self._tasks.values()]
+        storage.save_state(self._db_path, pets, tasks)
 
     # -- Pets --
 
@@ -389,6 +416,7 @@ class PawPalSystem:
             pet.id = str(uuid.uuid4())
         self._pets[pet.id] = pet
         logger.info("Pet added: %s (%s)", pet.name, pet.id)
+        self._save()
         return pet
 
     def get_pets(self) -> list[Pet]:
@@ -410,6 +438,7 @@ class PawPalSystem:
             raise KeyError(f"No pet found with id {task.pet_id!r}")
         self._tasks[task.id] = task
         logger.info("Task added: %s for pet %s", task.__class__.__name__, task.pet_id)
+        self._save()
         return task
 
     def get_tasks(self, pet_id: str | None = None) -> list[Task]:
@@ -425,6 +454,7 @@ class PawPalSystem:
             raise KeyError(f"No task found with id {task_id!r}")
         self._tasks[task_id].status = TaskStatus.COMPLETE
         logger.info("Task completed: %s", task_id)
+        self._save()
 
     # -- Schedule --
 

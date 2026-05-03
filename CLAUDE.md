@@ -6,7 +6,7 @@
 
 ## 1. Project overview
 
-**PawPal+** is a Python application for managing pet care: feedings, walks, medications, and vet appointments. It models tasks as first-class objects, schedules them with priority/urgency rules, and uses a **local LLM via Ollama** to plan, validate, and repair daily care plans. The primary interface is a **Streamlit UI**; a `demo.py` script covers scripted runs and testing.
+**PawPal+** is a Python application for managing pet care: feedings, walks, medications, and vet appointments. It models tasks as first-class objects, schedules them with priority/urgency rules, and uses a **local LLM via Ollama** to plan, validate, and repair daily care plans. The primary interface is a **Streamlit UI** (`streamlit run streamlit_app.py`).
 
 **In scope**
 - Track pets and their care tasks (feeding, walking, medication, appointments).
@@ -14,10 +14,10 @@
 - Local persistence of pets/tasks/history (JSON by default, SQLite optional).
 - An **agentic AI workflow** (plan → validate → repair) running on a local Ollama model.
 - Optional RAG over a small `knowledge/` corpus (breed care notes, medication guidelines).
-- Streamlit UI for interactive use; `demo.py` for scripted end-to-end demonstration.
+- **Streamlit UI as the primary interactive interface** — add pets/tasks, view schedule, trigger AI plans.
 
 **Non-goals**
-- No CLI interface — `demo.py` and Streamlit cover all use cases without the overhead.
+- No CLI interface — Streamlit is the interface for all interactive use.
 - Not a veterinary diagnosis tool. No medical decisions.
 - No multi-user accounts, auth, or cloud sync.
 - No mobile app, push notifications, or calendar integrations (yet).
@@ -41,8 +41,8 @@ pawpal-plus/
 │   ├── feeding_guidelines.md
 │   ├── medication_safety.md
 │   └── breed_notes.md
-├── demo.py                   # Scripted end-to-end demo (primary run entrypoint)
-├── streamlit_app.py          # Streamlit UI (main interactive interface)
+├── streamlit_app.py          # Streamlit UI — primary run entrypoint
+├── demo.py                   # (not yet implemented) optional scripted smoke-test
 ├── storage.py                # Load/save state (JSON or SQLite)
 ├── config.py                 # Env loading, constants, feature flags
 ├── logging_setup.py          # Central logging config
@@ -65,10 +65,11 @@ pawpal-plus/
 - `ai/agent.py` — orchestrates plan → validate → repair; the **only** module that calls the model.
 - `ai/ollama_client.py` — HTTP wrapper around Ollama; retries, timeouts, JSON-mode requests.
 - `ai/rag.py` — retrieves snippets from `knowledge/` to ground prompts.
-- `demo.py` — scripted scenario (hardcoded pets + tasks); proves the system works end-to-end.
-- `streamlit_app.py` — interactive UI; add pets/tasks, view schedules, trigger AI plans.
+- `streamlit_app.py` — **primary entry point**; add pets/tasks, view schedule, trigger AI plans.
+- `demo.py` — *(not yet implemented)* planned scripted scenario for quick smoke-tests.
 - `storage.py` — pure I/O; no business logic.
-- `config.py` — single source of truth for env vars and feature flags.
+- `config.py` — single source of truth for env vars and feature flags (loads `.env` via python-dotenv).
+- `logging_setup.py` — central logging configuration; call `configure()` at app startup.
 
 ---
 
@@ -87,7 +88,7 @@ pawpal-plus/
 ### Data flow
 
 ```
-demo.py / streamlit_app.py
+streamlit_app.py
       │
       ▼
 PawPalSystem ──► Scheduler ──► Schedule
@@ -119,38 +120,31 @@ ollama pull llama3.1:8b        # or qwen2.5:7b, mistral:7b, etc.
 ollama serve                   # leave running in a separate terminal
 
 # 2. Python project
-python -m venv .venv && source .venv/bin/activate
+python -m venv .venv
+source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env
+cp .env.example .env           # edit PAWPAL_MODEL, OLLAMA_HOST, etc. as needed
 ```
 
-### demo.py — scripted run
-
-`demo.py` is the fastest way to verify the full system works. It seeds a realistic scenario (2 pets, mixed task types) and runs the AI agent, printing the validated plan to stdout.
-
-```bash
-python demo.py              # full run with AI agent
-python demo.py --no-ai      # deterministic schedule only (Ollama not required)
-```
-
-Use `demo.py` to:
-- Confirm Ollama is working end-to-end.
-- Smoke-test after changing prompts, the agent, or the scheduler.
-- Show the system to someone quickly without opening a browser.
-
-### Streamlit UI — interactive interface
+### Streamlit UI — primary interface
 
 ```bash
 streamlit run streamlit_app.py
 ```
 
-The UI is the primary way to interact with PawPal+ beyond the demo. It covers:
-- Adding and editing pets and tasks.
-- Viewing today's deterministic schedule.
-- Triggering an AI-planned day and inspecting the plan with rationales.
-- Marking tasks complete.
+This is the normal way to use PawPal+. The UI covers:
+- Adding and editing pets and tasks (Pets and Tasks tabs).
+- Viewing today's urgency-sorted deterministic schedule with mark-complete buttons.
+- Triggering an AI-planned day and comparing it side-by-side with the deterministic schedule.
+- **Seed demo data** button: populates Rex (dog) + Luna (cat) with 5 mixed tasks in one click.
+- **Demo clock**: inject a custom `now` datetime for reproducible class demos.
+- **Reset DB**: wipe all data and start fresh (requires checkbox confirmation).
 
-Streamlit state is session-scoped. Persistent state lives in `PAWPAL_DB`; the UI reads and writes through `PawPalSystem`.
+Streamlit state is session-scoped. Persistent state lives in `PAWPAL_DB`; the UI reads and writes exclusively through `PawPalSystem`.
+
+### demo.py — not yet implemented
+
+A scripted `demo.py` is planned as an optional developer shortcut (seeds hardcoded pets/tasks, runs the agent, prints results to stdout). It does not exist yet. Use the Streamlit **Seed demo data** button and **AI Plan** tab for the same workflow in the meantime.
 
 ---
 
@@ -158,7 +152,7 @@ Streamlit state is session-scoped. Persistent state lives in `PAWPAL_DB`; the UI
 
 ### Feature: agentic plan → validate → repair (local Ollama)
 
-This is **integrated, not a side demo**: `demo.py` and the Streamlit "Today's Plan" view both go through the agent.
+This is **integrated, not a side feature**: the Streamlit "AI Plan" tab goes through the full agent pipeline.
 
 ### Pipeline
 
@@ -175,7 +169,7 @@ This is **integrated, not a side demo**: `demo.py` and the Streamlit "Today's Pl
 - All model calls go through `ai/ollama_client.py`. No other module imports `ollama` or `httpx` for model I/O.
 - Use Ollama's `format: "json"` mode for plan and repair calls. Smaller local models drift to prose otherwise.
 - Default model: `llama3.1:8b`. Configurable via `PAWPAL_MODEL`.
-- First call after `ollama serve` is slow (model load). The client logs a warning and proceeds; consider warming the model in `demo.py`.
+- First call after `ollama serve` is slow (model load). The client logs a warning and proceeds. The Streamlit spinner gives visible feedback during warm-up.
 
 ### Prompt & tooling boundaries
 
@@ -258,12 +252,12 @@ Prompt or agent changes must include a before/after eval run in the PR. Regressi
 - **Type hints required** on all public functions/methods. `mypy` expected to pass on `pawpal_system.py` and `ai/`.
 - **Docstrings**: Google-style. One-liner minimum on every public class/method; full docstring (Args/Returns/Raises) on anything in `pawpal_system.py` or `ai/agent.py`.
 - **Naming**: classes `PascalCase`, functions/vars `snake_case`, constants `UPPER_SNAKE`. Task subclasses end in `Task`.
-- **Logging**: use `logging.getLogger(__name__)`; never `print()` outside `demo.py`. Levels:
+- **Logging**: use `logging.getLogger(__name__)`; never `print()` in core modules (domain, AI, storage). Streamlit display APIs are the correct output mechanism in `streamlit_app.py`. Levels:
   - `DEBUG` — prompts, retrieved snippets, raw model output.
   - `INFO` — high-level flow (plan requested, repair attempt N, fallback engaged).
   - `WARNING` — degraded mode (Ollama unreachable, JSON re-ask).
   - `ERROR` — caught exceptions with context.
-- **Exceptions**: define domain errors in `pawpal_system.py` (`TaskValidationError`, `SchedulingConflict`) and AI errors in `ai/agent.py` (`PlanInvalidError`, `ModelUnavailableError`). Catch narrowly; never bare `except`. `streamlit_app.py` and `demo.py` are the only layers that convert exceptions to user-facing messages.
+- **Exceptions**: define domain errors in `pawpal_system.py` (`TaskValidationError`, `SchedulingConflict`) and AI errors in `ai/agent.py` (`PlanInvalidError`, `ModelUnavailableError`). Catch narrowly; never bare `except`. `streamlit_app.py` is the only layer that converts exceptions to user-facing messages.
 - **No I/O in domain code.** `Scheduler`, `Task`, validators stay pure.
 - **Determinism in tests.** Inject `now`. Mock the Ollama client.
 

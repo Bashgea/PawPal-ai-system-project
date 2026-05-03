@@ -2,6 +2,12 @@
 
 import os
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # python-dotenv is optional; env vars set in the shell still work
+
 OLLAMA_HOST      = os.getenv("OLLAMA_HOST",    "http://localhost:11434")
 PAWPAL_MODEL     = os.getenv("PAWPAL_MODEL",   "llama3.1:8b")
 MODEL_TIMEOUT_S  = int(os.getenv("MODEL_TIMEOUT_S",   "60"))

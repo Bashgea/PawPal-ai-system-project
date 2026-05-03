@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\bashi\\\\Documents\\\\codepathAI\\\\PawPal-ai-system-project\" -Force)",
+      "Bash(Select-Object Name, Mode)"
+    ]
+  }
+}

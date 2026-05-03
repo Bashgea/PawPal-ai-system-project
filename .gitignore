@@ -1,7 +1,7 @@
 # Python cache
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
+.pytest_cache/
 
 # Virtual environment
 .venv/
@@ -18,3 +18,7 @@ pawpal.db
 # IDE
 .idea/
 .vscode/
+
+# OS
+.DS_Store
+Thumbs.db

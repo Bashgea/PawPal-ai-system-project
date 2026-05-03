@@ -147,6 +147,7 @@ def _render_task_card(
     task: Task,
     sys: PawPalSystem,
     *,
+    key_prefix: str,
     show_complete_btn: bool = True,
     rationale: str = "",
     suggested_time: str = "",
@@ -157,6 +158,10 @@ def _render_task_card(
     Args:
         task:              The task to render.
         sys:               PawPalSystem for pet-name lookup.
+        key_prefix:        Unique string per render location (e.g. "tasks",
+                           "schedule", "ai").  Prevents duplicate Streamlit
+                           widget keys when the same task is rendered in more
+                           than one tab during the same script run.
         show_complete_btn: Whether to show the mark-complete button.
         rationale:         AI rationale text (displayed in italics when provided).
         suggested_time:    AI-suggested ISO time string (displayed when provided).
@@ -180,7 +185,7 @@ def _render_task_card(
             st.caption(f"ID: `{task.id[:8]}…`")
         with col_action:
             if show_complete_btn and task.status == TaskStatus.PENDING:
-                if st.button("✅ Complete", key=f"complete_{task.id}"):
+                if st.button("✅ Complete", key=f"{key_prefix}_complete_{task.id}"):
                     try:
                         sys.mark_complete(task.id)
                         st.rerun()
@@ -196,14 +201,36 @@ with st.sidebar:
     st.divider()
 
     # ── Config (read-only) ────────────────────────────────────────────────────
-    st.subheader("⚙️ Config")
-    abs_db = os.path.abspath(config.PAWPAL_DB)
-    st.text(f"DB: …{abs_db[-40:]}" if len(abs_db) > 42 else f"DB: {abs_db}")
+    _abs_db = os.path.abspath(config.PAWPAL_DB)
+    with st.expander("⚙️ Environment", expanded=False):
+        st.markdown(
+            f"**DB:** `{_abs_db}`  \n"
+            f"**AI:** {'✅ enabled' if config.ENABLE_AI else '❌ disabled'} (`ENABLE_AI`)  \n"
+            f"**RAG:** {'✅ enabled' if config.ENABLE_RAG else '❌ disabled'} "
+            f"(`ENABLE_RAG` — optional, no corpus required)  \n"
+            f"**Model:** `{config.PAWPAL_MODEL}`  \n"
+            f"**Ollama host:** `{config.OLLAMA_HOST}`"
+        )
 
-    ai_col, rag_col = st.columns(2)
-    ai_col.metric("AI",  "ON ✅" if config.ENABLE_AI  else "OFF ❌")
-    rag_col.metric("RAG", "ON ✅" if config.ENABLE_RAG else "OFF ❌")
-    st.caption(f"Model: `{config.PAWPAL_MODEL}`")
+    # ── Ollama health check ───────────────────────────────────────────────────
+    if st.button("🩺 Check Ollama", use_container_width=True, help="GET /api/tags — no model call"):
+        try:
+            from ai.ollama_client import OllamaClient
+            _hc = OllamaClient().health_check()
+            if _hc["reachable"]:
+                _model_list = ", ".join(_hc.get("models", [])) or "(none pulled)"
+                st.success(
+                    f"Ollama reachable in **{_hc['latency_ms']:.0f} ms**  \n"
+                    f"Models: {_model_list}"
+                )
+            else:
+                st.error(
+                    f"Ollama not reachable ({_hc['latency_ms']:.0f} ms)  \n"
+                    f"{_hc['error']}  \n\n"
+                    "Run **`ollama serve`** in a separate terminal."
+                )
+        except Exception as exc:
+            st.error(f"Health check error: {exc}")
     st.divider()
 
     # ── Demo clock (injected `now`) ───────────────────────────────────────────
@@ -246,6 +273,14 @@ with st.sidebar:
             st.rerun()
         except (TaskValidationError, KeyError, SchedulingConflict) as exc:
             st.error(f"Seed failed: {exc}")
+        except (OSError, PermissionError) as exc:
+            st.error(
+                f"Could not write demo data to disk: {exc}  \n\n"
+                "**Try these steps:**  \n"
+                "- Close `pawpal.json` if it is open in an editor or Excel.  \n"
+                "- Stop any duplicate `streamlit run` terminals sharing the same DB.  \n"
+                "- If OneDrive / cloud-sync is active, pause syncing and retry."
+            )
 
     st.divider()
     st.markdown("**⚠️ Danger zone**")
@@ -351,13 +386,13 @@ with tab_tasks:
                     st.markdown(f"##### {_pet.name}")
                     for _task in _pet_tasks:
                         _shown.add(_task.id)
-                        _render_task_card(_task, _sys)
+                        _render_task_card(_task, _sys, key_prefix="tasks")
             # Orphaned tasks (pet deleted mid-session)
             _orphans = [t for t in _tasks if t.id not in _shown]
             if _orphans:
                 st.markdown("##### ⚠️ Orphaned tasks")
                 for _task in _orphans:
-                    _render_task_card(_task, _sys)
+                    _render_task_card(_task, _sys, key_prefix="tasks_orphan")
 
     with col_form:
         st.subheader("Add a task")
@@ -495,7 +530,7 @@ with tab_schedule:
 
             st.divider()
             for _task in _schedule.tasks:
-                _render_task_card(_task, _sys)
+                _render_task_card(_task, _sys, key_prefix="schedule")
 
     except SchedulingConflict as exc:
         st.error(
@@ -520,14 +555,11 @@ with tab_ai:
             "Set `ENABLE_AI=true` in your `.env` and restart the app."
         )
     else:
-        _info_col, _model_col = st.columns([3, 1])
-        with _info_col:
-            st.info(
-                f"Model: `{config.PAWPAL_MODEL}` at `{config.OLLAMA_HOST}`  \n"
-                f"Make sure **`ollama serve`** is running before generating a plan."
-            )
-        with _model_col:
-            st.metric("RAG", "ON ✅" if config.ENABLE_RAG else "OFF ❌")
+        _rag_note = "RAG enabled" if config.ENABLE_RAG else "RAG disabled (ENABLE_RAG=false)"
+        st.info(
+            f"Model: `{config.PAWPAL_MODEL}` at `{config.OLLAMA_HOST}`  •  {_rag_note}  \n"
+            f"Make sure **`ollama serve`** is running before generating a plan."
+        )
 
     if st.button("✨ Generate AI plan", type="primary"):
         with st.spinner(f"Asking `{config.PAWPAL_MODEL}` to plan the day…"):
@@ -567,15 +599,19 @@ with tab_ai:
         _col_ai, _col_det = st.columns(2, gap="large")
 
         with _col_ai:
-            _badge = "🤖 AI Plan" if _plan.is_ai_planned else "📋 Fallback Plan"
-            st.markdown(f"### {_badge}")
-            st.caption(f"{len(_plan.ordered_tasks)} task(s) ordered by AI")
+            if _plan.is_ai_planned:
+                st.markdown("### 🤖 AI Plan")
+                st.caption(f"{len(_plan.ordered_tasks)} task(s) — AI-ordered with suggested times")
+            else:
+                st.markdown("### 📋 Fallback Plan")
+                st.caption(f"{len(_plan.ordered_tasks)} task(s) — deterministic order (AI unavailable)")
 
             for _i, _task in enumerate(_plan.ordered_tasks, 1):
                 _rationale     = _plan.rationales[_i - 1] if _i - 1 < len(_plan.rationales) else ""
                 _suggested_t   = _plan.time_windows.get(_task.id, "")
                 _render_task_card(
                     _task, _sys,
+                    key_prefix="ai_plan",
                     show_complete_btn=False,
                     rationale=_rationale,
                     suggested_time=_suggested_t,

@@ -10,7 +10,7 @@ except ImportError:
 
 OLLAMA_HOST      = os.getenv("OLLAMA_HOST",    "http://localhost:11434")
 PAWPAL_MODEL     = os.getenv("PAWPAL_MODEL",   "llama3.1:8b")
-MODEL_TIMEOUT_S  = int(os.getenv("MODEL_TIMEOUT_S",   "60"))
+MODEL_TIMEOUT_S  = int(os.getenv("MODEL_TIMEOUT_S",   "120"))  # covers connect + full generation
 MODEL_MAX_RETRIES = int(os.getenv("MODEL_MAX_RETRIES", "2"))
 MAX_REPAIR_ITERS = int(os.getenv("MAX_REPAIR_ITERS",  "2"))
 

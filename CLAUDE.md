@@ -35,12 +35,9 @@ pawpal-plus/
 │   ├── __init__.py
 │   ├── agent.py              # Plan → validate → repair loop
 │   ├── prompts.py            # Versioned prompt templates
-│   ├── rag.py                # Lightweight retrieval over knowledge/
+│   ├── rag.py                # (not yet implemented) RAG over knowledge/
 │   └── ollama_client.py      # Ollama wrapper (retries, timeouts, JSON mode)
-├── knowledge/                # Small RAG corpus (.md files)
-│   ├── feeding_guidelines.md
-│   ├── medication_safety.md
-│   └── breed_notes.md
+├── knowledge/                # (not yet implemented) RAG corpus (.md files)
 ├── streamlit_app.py          # Streamlit UI — primary run entrypoint
 ├── demo.py                   # (not yet implemented) optional scripted smoke-test
 ├── storage.py                # Load/save state (JSON or SQLite)
@@ -48,12 +45,10 @@ pawpal-plus/
 ├── logging_setup.py          # Central logging config
 ├── tests/
 │   ├── test_scheduler.py
-│   ├── test_tasks.py
 │   ├── test_agent.py         # Uses a mocked Ollama client
-│   └── test_eval.py
-├── eval/
-│   ├── cases.json            # Eval scenarios + expected invariants
-│   └── run_eval.py           # Plan validity, repair success, fallback rate
+│   ├── test_ollama_client.py
+│   └── test_storage.py
+├── eval/                     # (not yet implemented) reliability eval harness
 ├── .env.example
 ├── requirements.txt
 ├── README.md
@@ -64,7 +59,7 @@ pawpal-plus/
 - `pawpal_system.py` — domain models, scheduler, public API used by UI/agent/demo.
 - `ai/agent.py` — orchestrates plan → validate → repair; the **only** module that calls the model.
 - `ai/ollama_client.py` — HTTP wrapper around Ollama; retries, timeouts, JSON-mode requests.
-- `ai/rag.py` — retrieves snippets from `knowledge/` to ground prompts.
+- `ai/rag.py` — *(not yet implemented)* will retrieve snippets from `knowledge/` to ground prompts; the agent falls back gracefully when absent.
 - `streamlit_app.py` — **primary entry point**; add pets/tasks, view schedule, trigger AI plans.
 - `demo.py` — *(not yet implemented)* planned scripted scenario for quick smoke-tests.
 - `storage.py` — pure I/O; no business logic.
@@ -222,20 +217,13 @@ Rules:
 ```bash
 pytest -q                          # unit + integration tests (mocked Ollama)
 pytest tests/test_agent.py -q      # agent behavior
-python eval/run_eval.py            # reliability eval, prints pass rate
 ruff check . && ruff format --check .
 mypy pawpal_system.py ai/
 ```
 
-### Eval (`eval/run_eval.py`)
+### Eval (`eval/run_eval.py`) — not yet implemented
 
-Runs the agent against `eval/cases.json` and reports:
-- **Plan validity rate** (first try).
-- **Repair success rate** (passes after repair).
-- **Fallback rate** (deterministic schedule used).
-- **Average repair iterations.**
-
-Prompt or agent changes must include a before/after eval run in the PR. Regressions need an explanation.
+The eval harness (`eval/`) is planned but not yet implemented. When added, it will run the agent against `eval/cases.json` and report plan validity rate, repair success rate, fallback rate, and average repair iterations. Prompt changes should include a before/after eval run once the harness exists.
 
 ### Test isolation
 
@@ -279,18 +267,18 @@ Prompt or agent changes must include a before/after eval run in the PR. Regressi
 4. Test: construct a violating schedule, assert the rule fires.
 5. Add an eval case the model is likely to violate, to exercise repair.
 
-### Add a knowledge document for RAG
+### Add a knowledge document for RAG *(requires implementing ai/rag.py first)*
 1. Drop a focused `.md` file into `knowledge/`. Keep under ~2KB; split if larger.
-2. No code change needed — `ai/rag.py` indexes the directory at startup.
-3. If retrieval quality matters, add a test in `test_agent.py` asserting the snippet is retrieved for a representative query.
+2. Implement `ai/rag.py` with a `RAG` class that exposes `retrieve(query) -> list[str]`.
+3. No further change needed in `agent.py` — it already imports `RAG` inside a try/except.
+4. If retrieval quality matters, add a test in `test_agent.py` asserting the snippet is retrieved for a representative query.
 
 ### Change a prompt
-1. Bump the version constant (`PLAN_PROMPT_V1` → `_V2`); keep the old one until eval passes.
-2. Run `python eval/run_eval.py` before and after; include both numbers in the PR.
+1. Bump the version constant (`PLAN_PROMPT_V1` → `_V2`); keep the old one until testing confirms the new version works correctly.
 
 ### Switch to a different Ollama model
 1. `ollama pull <model>` on the host.
 2. Set `PAWPAL_MODEL=<model>` in `.env`.
-3. Run `python eval/run_eval.py` — different models have different JSON adherence and pass rates.
+3. Verify the AI Plan tab works end-to-end in the Streamlit UI.
 
 ---
